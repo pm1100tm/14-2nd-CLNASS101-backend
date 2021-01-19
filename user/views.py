@@ -9,7 +9,7 @@ from django.http import JsonResponse
 from my_settings import SECRET, ALGORITHM
 from core.utils import login_decorator
 
-from .models import *
+from .models import User, ProductLike, RecentlyView
 from product.models import Product, Community, CommunityLike, CommunityComment, Lecture, LectureComment
 
 from core.utils import (
@@ -20,6 +20,7 @@ from core.utils import (
     checkpw,
     issue_token,
 )
+
 
 class SignUpView(View):
     def post(self, request):
@@ -79,6 +80,7 @@ class LogInView(View):
         except KeyError as e:
             return JsonResponse({"MESSAGE": f"KEY_ERROR:{e}"}, status=400)
 
+
 class KakaoLogInView(View):
     def post(self, request):
         try:
@@ -108,6 +110,7 @@ class KakaoLogInView(View):
             return JsonResponse({"MESSAGE": "TYPE_ERROR"}, status=400)
         except KeyError as e:
             return JsonResponse({"MESSAGE": f"KEY_ERROR:{e}"}, status=400)
+
 
 class SearchView(View):
     def get(self, request):
@@ -473,7 +476,7 @@ class LectureCommentView(View):
     @login_decorator(login_required=True)
     def get(self, request):
         try:
-            
+            user_id = request.user.id
             lecture_comments = LectureComment.objects.select_related('user').filter(user_id=user_id)
             comment_count = LectureComment.objects.all().count()
             comments = [{
@@ -491,6 +494,7 @@ class LectureCommentView(View):
             return JsonResponse({'MESSAGE': f'KEY_ERROR:{e}'}, status=400)
         except json.JSONDecodeError as e:
             return JsonResponse({'MESSAGE': f'JSON_DECODE_ERROR:{e}'}, status=400)
+
 
 class CommunityLikeView(View):
     @login_decorator(login_required=True)
