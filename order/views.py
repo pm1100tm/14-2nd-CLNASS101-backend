@@ -8,7 +8,7 @@ from django.db import IntegrityError, transaction
 from product.models import Product
 from user.models import User, UserCoupon, UserProduct
 from order.models import Order, OrderStatus, PaymentMethod
-from core.utils import login_decorator
+from core.common_utils import login_decorator
 
 class SelectProductAndPaymentView(View):
     

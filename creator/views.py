@@ -7,38 +7,40 @@ from django.db.models    import Q
 from django.utils        import timezone
 
 from creator.models      import (
-                            TemporaryProduct,
-                            TemporaryProductImage,
-                            TemporaryChapter,
-                            TemporaryLecture,
-                            TemporaryLectureContent,
-                            TemporaryLectureContentDescription,
-                            TemporaryLectureContentImage,
-                            TemporaryKit,
-                            TemporaryKitImage
-                        )    
-from product.models      import ( 
-                            MainCategory,
-                            SubCategory,
-                            Difficulty,
-                            LectureContent,
-                            LectureContentDescription,
-                            LectureContentImageUrl,
-                            ProductSubImage,
-                            Chapter,
-                            Lecture,
-                            Product,
-                            LectureVideo
-                        )
+    TemporaryProduct,
+    TemporaryProductImage,
+    TemporaryChapter,
+    TemporaryLecture,
+    TemporaryLectureContent,
+    TemporaryLectureContentDescription,
+    TemporaryLectureContentImage,
+    TemporaryKit,
+    TemporaryKitImage
+)
+from product.models      import (
+    MainCategory,
+    SubCategory,
+    Difficulty,
+    LectureContent,
+    LectureContentDescription,
+    LectureContentImageUrl,
+    ProductSubImage,
+    Chapter,
+    Lecture,
+    Product,
+    LectureVideo
+)
 from kit.models          import Kit, KitSubImageUrl
-from core                import S3FileManager, random_number_generator
-from core.utils          import login_decorator
+from core                import S3FileManager
+from core.common_utils   import login_decorator
 from clnass_101.settings import S3_BUCKET_URL
 
+
 class FirstTemporaryView(View):
+    
     @login_decorator('FirstTemporaryView')
     def get(self, request, temporary_id):
-        user       = request.user 
+        user       = request.user
         categories = MainCategory.objects.filter(
             Q(name='크리에이티브') |
             Q(name='커리어') |
@@ -48,7 +50,7 @@ class FirstTemporaryView(View):
             'id'   :category.id,
             'name' :category.name,
             'subCategories' : [{
-                'id'  : sub.id, 
+                'id'  : sub.id,
                 'name': sub.name
             } for sub in category.subcategory_set.all()]
         } for category in categories]
@@ -77,7 +79,7 @@ class FirstTemporaryView(View):
     def post(self, request, temporary_id):
         data   = json.loads(request.POST['body'])
         user   = request.user
-        images = request.FILES.getlist('files') 
+        images = request.FILES.getlist('files')
 
         required_key = {
             'categoryName',
@@ -87,7 +89,7 @@ class FirstTemporaryView(View):
             'price',
             'sale'
         }
-         
+        
         for key in required_key:
             if key not in data:
                 return JsonResponse({'message':'KEY_ERROR'}, status=400)
@@ -128,6 +130,7 @@ class FirstTemporaryView(View):
             
         return JsonResponse({'message':'SUCCESS'}, status=200)
 
+
 class SecondTemporaryView(View):
     @login_decorator('SecondTemporaryView')
     def get(self, request, temporary_id):
@@ -165,14 +168,14 @@ class SecondTemporaryView(View):
                 temp = TemporaryChapter.objects.create(
                     temporary_product_id = temporary_id,
                     order                = i,
-                    name                 = chapter['name'] 
+                    name                 = chapter['name']
                 )
                 
                 if images:
                     image = images.pop(0)
-                    file_name = 'images/' + random_number_generator()
+                    file_name = 'images/' + CommonUtils.get_ra()
                     url       = S3FileManager().file_upload(image, file_name)
-                    temp.thumbnail_image = url 
+                    temp.thumbnail_image = url
                     temp.save()
                 
                 lectures += [{
@@ -200,6 +203,7 @@ class SecondTemporaryView(View):
 
         except KeyError:
             return JsonResponse({'message':'KEY_ERROR'}, status=400)
+
 
 class ThirdTemporaryView(View):
     @login_decorator('ThirdTemporaryView')
@@ -244,10 +248,10 @@ class ThirdTemporaryView(View):
                 
             #기존 글 제거
             TemporaryLectureContentDescription.objects.filter(temporary_product_id=temporary_id).delete()
-                
+            
             #기존 글그림 연결 제거
             TemporaryLectureContent.objects.filter(temporary_product_id=temporary_id).delete()
-                
+            
             videos = request.FILES.getlist('videos')
             images = request.FILES.getlist('images')
             for lecture in data['lectures']:
@@ -298,6 +302,7 @@ class ThirdTemporaryView(View):
         except KeyError:
             return JsonResponse({'message':'KEY_ERROR'}, status=400)
 
+
 class FourthTemporaryView(View):
     @login_decorator('FourthTemporaryView')
     def get(self, request, temporary_id):
@@ -338,6 +343,7 @@ class FourthTemporaryView(View):
 
         return JsonResponse({'message':'SUCCESS'}, status=200)
 
+
 class CreateTemporaryView(View):
     @login_decorator('CreateTemporaryView')
     @transaction.atomic
@@ -357,8 +363,8 @@ class CreateTemporaryView(View):
 
         #강의 개설
         product = Product.objects.create(
-            name            = temp.name, 
-            price           = temp.price, 
+            name            = temp.name,
+            price           = temp.price,
             sale            = temp.sale,
             difficulty      = temp.difficulty,
             main_category   = temp.main_category,
@@ -399,7 +405,7 @@ class CreateTemporaryView(View):
             new_image_url   = LectureContentImageUrl.objects.create(image_url=image_url)
             LectureContent.objects.create(description=new_description, image_url=new_image_url, order=order, lecture=lecture, product=product)
         
-        #kit 
+        #kit
         for image in kit_images:
             if Kit.objects.filter(name=image.temporary_kit.name).exists():
                 kit = Kit.objects.get(name=image.temporary_kit.name)
@@ -413,4 +419,4 @@ class CreateTemporaryView(View):
         #temp 삭제
         temp.delete()
 
-        return JsonResponse({'message':'SUCCESS'},status=200)
+        return JsonResponse({'message':'SUCCESS'}, status=200)

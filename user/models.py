@@ -8,7 +8,7 @@ class User(models.Model):
     password            = models.CharField(max_length=200, null=True)
     phone_number        = models.CharField(max_length=50)
     is_creator          = models.BooleanField(default=False, null=True)
-    profile_image       = models.URLField(max_length=1000, null=True)
+    profile_image_url   = models.URLField(max_length=100, null=True)
     is_benefit          = models.BooleanField(default=False)
     point               = models.IntegerField(default=0)
     etc_channel         = models.CharField(max_length=50, null=True)
@@ -38,6 +38,7 @@ class User(models.Model):
     kit_like            = models.ManyToManyField('kit.Kit', through='kit.KitLike')
     created_at          = models.DateTimeField(auto_now_add=True)
     updated_at          = models.DateTimeField(auto_now=True, editable=True)
+    is_deleted          = models.BooleanField(default=False)
     
     class Meta:
         db_table = 'users'
