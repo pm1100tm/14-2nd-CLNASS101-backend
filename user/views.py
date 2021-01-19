@@ -1,17 +1,24 @@
 import json
 import requests
-from datetime import datetime, timedelta
+from datetime         import datetime, timedelta
 
 from django.db.models import Count, Q
-from django.views import View
-from django.http import JsonResponse
+from django.views     import View
+from django.http      import JsonResponse
 
-from my_settings import SECRET, ALGORITHM
-from core.utils import login_decorator
-
-from .models import User, ProductLike, RecentlyView
-from product.models import Product, Community, CommunityLike, CommunityComment, Lecture, LectureComment
-
+from core.common_utils import CommonUtil
+from core.exception import NotValidEmail, NotValidUserName, NotValidPassword, DuplicateUser, BlankField
+from my_settings      import SECRET, ALGORITHM
+from core.utils       import login_decorator
+from .models          import User, ProductLike, RecentlyView
+from product.models   import (
+    Product,
+    Community,
+    CommunityLike,
+    CommunityComment,
+    Lecture,
+    LectureComment
+)
 from core.utils import (
     get_hashed_pw,
     is_valid_name,
@@ -23,39 +30,91 @@ from core.utils import (
 
 
 class SignUpView(View):
+    """ 회원가입 View
+        
+        Author : 심원두
+        
+        History :
+            2021-01-19 - 초기 생성
+    
+    """
+    
     def post(self, request):
-        try:
-            data = json.loads(request.body)
+        """ 화면에서 사용자의 정보를 받아 유저 테이블에 등록
+        
+            Author  : 심원두
             
-            name = data["name"]
-            email = data["email"]
-            password = data["password"]
+            Request :
+                name     - 사용자 이름(실명)
+                email    - 사용자 이메일
+                password - 비밀번호
+            
+            Return  :
+                {"MESSAGE": "SUCCESS"}, status=201               - 유저 정보 등록 성공
+                
+                {"MESSAGE": "DUPLICATE_INFORMATION"}, status=400 - 중복된 유저 정보
+                {"MESSAGE": "INVALID_NAME"}, status=400          - 잘못된 사용자 이름
+                {"MESSAGE": "INVALID_EMAIL"}, status=400         - 잘못된 이메일 형식
+                {"MESSAGE": "INVALID_PASSWORD"}, status=400      - 잘못된 비밀번호 형식
+                
+            History :
+                2021-01-19 - 초기 생성 (심원두)
+        """
+        
+        try:
+            payload   = json.loads(request.body)
+            
+            user_name = payload["name"]
+            email     = payload["email"]
+            password  = payload["password"]
+            
+            if not CommonUtil.is_blank(user_name, email, password):
+                raise BlankField
+            
+            if not CommonUtil.is_user_name_valid(user_name):
+                raise NotValidUserName
+            
+            if not CommonUtil.is_email_valid(email):
+                raise NotValidEmail
+            
+            if not CommonUtil.is_valid_password(password):
+                raise NotValidPassword
             
             if User.objects.filter(email=email).exists():
-                return JsonResponse({"MESSAGE": "DUPLICATE_INFORMATION"}, status=409)
-            
-            if not is_valid_name(name):
-                return JsonResponse({"MESSAGE": "INVALID_NAME"}, status=400)
-            
-            if not is_valid_email(email):
-                return JsonResponse({"MESSAGE": "INVALID_EMAIL"}, status=400)
-            
-            if not is_valid_password(password):
-                return JsonResponse({"MESSAGE": "INVALID_PASSWORD"}, status=400)
+                raise DuplicateUser
             
             User.objects.create(
-                name=name,
-                email=email,
-                password=get_hashed_pw(password)
+                name     = user_name,
+                email    = email,
+                password = get_hashed_pw(password)
             )
             
             return JsonResponse({"MESSAGE": "SUCCESS"}, status=201)
-        except json.JSONDecodeError as e:
-            return JsonResponse({"MESSAGE": f"JSON_ERROR:{e}"}, status=400)
-        except TypeError:
-            return JsonResponse({"MESSAGE": "TYPE_ERROR"}, status=400)
+        
         except KeyError as e:
             return JsonResponse({"MESSAGE": f"KEY_ERROR:{e}"}, status=400)
+        
+        except TypeError:
+            return JsonResponse({"MESSAGE": "TYPE_ERROR"}, status=400)
+        
+        except BlankField as e:
+            return JsonResponse({"MESSAGE": e.__str__()}, status=400)
+        
+        except NotValidUserName as e:
+            return JsonResponse({"MESSAGE": e.__str__()}, status=400)
+        
+        except NotValidEmail as e:
+            return JsonResponse({"MESSAGE": e.__str__()}, status=400)
+        
+        except NotValidPassword as e:
+            return JsonResponse({"MESSAGE": e.__str__()}, status=400)
+
+        except DuplicateUser as e:
+            return JsonResponse({"MESSAGE": e.__str__()}, status=400)
+        
+        except json.JSONDecodeError as e:
+            return JsonResponse({"MESSAGE": f"JSON_ERROR:{e}"}, status=400)
+
 
 class LogInView(View):
     def post(self, request):
