@@ -1,31 +1,43 @@
 import json
 import requests
-from datetime         import datetime, timedelta
+from datetime            import datetime, timedelta
 
-from django.db.models import Count, Q
-from django.views     import View
-from django.http      import JsonResponse
+from django.db.models    import Count, Q
+from django.views        import View
+from django.http         import JsonResponse
 
-from core.common_utils import CommonUtil
-from core.exception import NotValidEmail, NotValidUserName, NotValidPassword, DuplicateUser, BlankField
-from my_settings      import SECRET, ALGORITHM
-from core.utils       import login_decorator
-from .models          import User, ProductLike, RecentlyView
-from product.models   import (
+from core.common_utils   import (
+    CommonUtil,
+    CommonConstant,
+    login_decorator,
+    query_debugger,
+    get_hashed_pw,
+    check_password,
+    issue_access_token
+)
+from core.exception      import (
+    NotValidEmail,
+    NotValidUserName,
+    NotValidPassword,
+    DuplicatedUser,
+    BlankField,
+    NotExistUser,
+    WrongPassword
+)
+from clnass_101.settings import S3_BUCKET_URL
+from user.models         import (
+    User,
+    ProductLike,
+    RecentlyView,
+    UserProduct
+)
+from product.models      import (
     Product,
     Community,
     CommunityLike,
     CommunityComment,
     Lecture,
     LectureComment
-)
-from core.utils import (
-    get_hashed_pw,
-    is_valid_name,
-    is_valid_email,
-    is_valid_password,
-    checkpw,
-    issue_token,
 )
 
 
@@ -35,38 +47,37 @@ class SignUpView(View):
         Author : 심원두
         
         History :
-            2021-01-19 - 초기 생성
-    
+            2021-01-19 - 리펙토링 (심원두)
     """
-    
+    @query_debugger
     def post(self, request):
-        """ 화면에서 사용자의 정보를 받아 유저 테이블에 등록
-        
-            Author  : 심원두
+        """ 회원 가입
             
-            Request :
+            Author: 심원두
+            
+            Request:
                 name     - 사용자 이름(실명)
                 email    - 사용자 이메일
                 password - 비밀번호
             
-            Return  :
-                {"MESSAGE": "SUCCESS"}, status=201               - 유저 정보 등록 성공
-                
-                {"MESSAGE": "DUPLICATE_INFORMATION"}, status=400 - 중복된 유저 정보
-                {"MESSAGE": "INVALID_NAME"}, status=400          - 잘못된 사용자 이름
-                {"MESSAGE": "INVALID_EMAIL"}, status=400         - 잘못된 이메일 형식
-                {"MESSAGE": "INVALID_PASSWORD"}, status=400      - 잘못된 비밀번호 형식
+            Return:
+                {"message": "SIGN_UP_SUCCESS"},         status=201 - 유저 정보 등록 성공
+                {"message": "KEY_ERROR:{key_name}"},    status=400 - 키 에러
+                {"message": "INPUT_REQUIRED"},          status=400 - 필수 입력 값 없음
+                {"message": "INVALID_USER_NAME"},       status=400 - 잘못된 사용자 이름
+                {"message": "INVALID_EMAIL_FORMAT"},    status=400 - 잘못된 이메일 형식
+                {"message": "INVALID_PASSWORD_FORMAT"}, status=400 - 잘못된 비밀번호 형식
+                {"message": "DUPLICATED_USER"},         status=400 - 중복된 유저 정보
                 
             History :
-                2021-01-19 - 초기 생성 (심원두)
+                2021-01-19 - 리펙토링 완료 (심원두)
         """
-        
         try:
             payload   = json.loads(request.body)
             
-            user_name = payload["name"]
-            email     = payload["email"]
-            password  = payload["password"]
+            user_name = payload["name"].strip()
+            email     = payload["email"].strip()
+            password  = payload["password"].strip()
             
             if not CommonUtil.is_blank(user_name, email, password):
                 raise BlankField
@@ -80,8 +91,8 @@ class SignUpView(View):
             if not CommonUtil.is_valid_password(password):
                 raise NotValidPassword
             
-            if User.objects.filter(email=email).exists():
-                raise DuplicateUser
+            if User.objects.filter(email=email, is_deleted=0).exists():
+                raise DuplicatedUser
             
             User.objects.create(
                 name     = user_name,
@@ -89,86 +100,132 @@ class SignUpView(View):
                 password = get_hashed_pw(password)
             )
             
-            return JsonResponse({"MESSAGE": "SUCCESS"}, status=201)
+            return JsonResponse({"message": "SIGN_UP_SUCCESS"}, status=201)
         
         except KeyError as e:
-            return JsonResponse({"MESSAGE": f"KEY_ERROR:{e}"}, status=400)
-        
-        except TypeError:
-            return JsonResponse({"MESSAGE": "TYPE_ERROR"}, status=400)
+            return JsonResponse({"message": f"KEY_ERROR:{e}"}, status=400)
         
         except BlankField as e:
-            return JsonResponse({"MESSAGE": e.__str__()}, status=400)
+            return JsonResponse({"message": f"{e}"}, status=400)
         
         except NotValidUserName as e:
-            return JsonResponse({"MESSAGE": e.__str__()}, status=400)
+            return JsonResponse({"message": f"{e}"}, status=400)
         
         except NotValidEmail as e:
-            return JsonResponse({"MESSAGE": e.__str__()}, status=400)
+            return JsonResponse({"message": f"{e}"}, status=400)
         
         except NotValidPassword as e:
-            return JsonResponse({"MESSAGE": e.__str__()}, status=400)
-
-        except DuplicateUser as e:
-            return JsonResponse({"MESSAGE": e.__str__()}, status=400)
+            return JsonResponse({"message": f"{e}"}, status=400)
         
-        except json.JSONDecodeError as e:
-            return JsonResponse({"MESSAGE": f"JSON_ERROR:{e}"}, status=400)
+        except DuplicatedUser as e:
+            return JsonResponse({"message": f"{e}"}, status=400)
 
 
-class LogInView(View):
+class SignInView(View):
+    """ 로그인 View
+
+        Author : 심원두
+
+        History :
+            2021-01-19 - 리텍토링 (심원두)
+    """
+    @query_debugger
     def post(self, request):
+        """ 로그인
+            
+            Author: 심원두
+            
+            Request:
+                email    - 사용자 이메일
+                password - 비밀번호
+            
+            Return:
+                {"message": "SIGN_IN_SUCCESS"},         status=200 - 유저 정보 등록 성공
+                {"message": "KEY_ERROR:{key_name}"},    status=400 - 키 에러
+                {"message": "INPUT_REQUIRED"},          status=400 - 필수 입력 값 없음
+                {"message": "NOT_EXIST_USER"},          status=400 - 존재하지 않는 유저
+                {"message": "WRONG_PASSWORD"},          status=400 - 패스워드 불일치
+            
+            History :
+                2021-01-19 - 리펙토링 진행 중 (심원두)
+        """
         try:
-            data = json.loads(request.body)
-            user = User.objects.get(email=data["email"])
-            password = data["password"]
+            payload  = json.loads(request.body)
             
-            if not checkpw(password, user):
-                return JsonResponse({"MESSAGE": "INVALID_PASSWORD"}, status=401)
+            email    = payload['email'].strip()
+            password = payload['password'].strip()
             
-            token = issue_token(user.id)
+            if not CommonUtil.is_blank(email, password):
+                raise BlankField
             
-            return JsonResponse({"token": token, "name": user.name}, status=200)
+            if not CommonUtil.is_email_valid(email):
+                raise NotValidEmail
+            
+            if not User.objects.filter(email=email, is_deleted=0).exists():
+                raise NotExistUser
+            
+            user = User.objects.get(email=email, is_deleted=0)
+            
+            if not check_password(password, user.password):
+                return WrongPassword
+            
+            access_token = issue_access_token(user.id)
+            return JsonResponse(
+                {
+                    "message": "SIGN_IN_SUCCESS",
+                    "access_token" : access_token
+                },
+                status=200
+            )
         
-        except User.DoesNotExist:
-            return JsonResponse({"MESSAGE": "NO_EXIST_USER"}, status=401)
-        except json.JSONDecodeError as e:
-            return JsonResponse({"MESSAGE": f"JSON_ERROR:{e}"}, status=400)
-        except TypeError:
-            return JsonResponse({"MESSAGE": "TYPE_ERROR"}, status=400)
         except KeyError as e:
-            return JsonResponse({"MESSAGE": f"KEY_ERROR:{e}"}, status=400)
+            return JsonResponse({"message": f"{e}"}, status=400)
+        
+        except BlankField as e:
+            return JsonResponse({"message": f"{e}"}, status=400)
+        
+        except NotValidEmail as e:
+            return JsonResponse({"message": f"{e}"}, status=400)
+        
+        except NotValidPassword as e:
+            return JsonResponse({"message": f"{e}"}, status=400)
+        
+        except NotExistUser as e:
+            return JsonResponse({"message": f"{e}"}, status=400)
+        
+        except json.JSONDecodeError as e:
+            return JsonResponse({"message": f"{e}"}, status=400)
 
 
-class KakaoLogInView(View):
+class SocialSignInKaKaoView(View):
     def post(self, request):
         try:
             access_token = request.headers.get("Authorization", None)
             if not access_token:
-                return JsonResponse({'MESSAGE': 'TOKEN_REQUIRED'}, status=400)
+                return JsonResponse({'message': 'TOKEN_REQUIRED'}, status=400)
             url = "https://kapi.kakao.com/v2/user/me"
             headers = {
                 "Authorization": f"Bearer {access_token}"
             }
             response = requests.get(url, headers=headers).json()
             if not 'email' in response['kakao_account']:
-                return JsonResponse({'MESSAGE': 'EMAIL_REQUIRED'}, status=405)
+                return JsonResponse({'message': 'EMAIL_REQUIRED'}, status=405)
             kakao_user = User.objects.get_or_create(
                 name=response["properties"]["nickname"],
                 email=response["kakao_account"]["email"],
                 profile_image=response["properties"]["profile_image"],
             )[0]
-            token = issue_token(kakao_user.id)
+            token = issue_access_token(kakao_user.id)
             return JsonResponse({"token": token, "name": kakao_user.name, 'profile_image': kakao_user.profile_image},
                                 status=200)
         except json.JSONDecodeError as e:
-            return JsonResponse({"MESSAGE": f"JSON_ERROR:{e}"}, status=400)
+            return JsonResponse({"message": f"JSON_ERROR:{e}"}, status=400)
         except User.DoesNotExist:
-            return JsonResponse({"MESSAGE": "NO_EXIST_USER"}, status=401)
+            return JsonResponse({"message": "NO_EXIST_USER"}, status=401)
         except TypeError:
-            return JsonResponse({"MESSAGE": "TYPE_ERROR"}, status=400)
+            return JsonResponse({"message": "TYPE_ERROR"}, status=400)
         except KeyError as e:
-            return JsonResponse({"MESSAGE": f"KEY_ERROR:{e}"}, status=400)
+            return JsonResponse({"message": f"KEY_ERROR:{e}"}, status=400)
 
 
 class SearchView(View):
@@ -217,7 +274,7 @@ class SearchView(View):
                      Q(detail_category__name__icontains=search)
             
             if not search:
-                return JsonResponse({'MESSAGE': 'WRONG_KEY'}, status=400)
+                return JsonResponse({'message': 'WRONG_KEY'}, status=400)
             
             search_list = [{
                 'id'         : product.id,
@@ -233,14 +290,14 @@ class SearchView(View):
             } for product in products.filter(q, **filters)]
             
             if not search_list:
-                return JsonResponse({'MESSAGE': 'NO_RESULT'}, status=400)
+                return JsonResponse({'message': 'NO_RESULT'}, status=400)
             return JsonResponse({'search_result': search_list}, status=200)
         except KeyError as e:
-            return JsonResponse({'MESSAGE': f'KEY_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'KEY_ERROR:{e}'}, status=400)
         except TypeError:
-            return JsonResponse({'MESSAGE': 'TYPE_ERROR'}, status=400)
+            return JsonResponse({'message': 'TYPE_ERROR'}, status=400)
         except json.JSONDecodeError as e:
-            return JsonResponse({'MESSAGE': f'JSON_DECODE_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'JSON_DECODE_ERROR:{e}'}, status=400)
 
 class MyPageView(View):
     @login_decorator(login_required=True)
@@ -312,15 +369,15 @@ class MyPageView(View):
                 {'PROFILE': user_profile, 'OWN_PRODUCT': own_list, 'RECENT_VIEW': viewed_list, 'CREATED': created_list,
                  'LIKED'  : liked_list}, status=200)
         except User.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'INVALID_USER'}, status=400)
+            return JsonResponse({'message': 'INVALID_USER'}, status=400)
         except Product.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'INVALID_PRODUCT'}, status=400)
+            return JsonResponse({'message': 'INVALID_PRODUCT'}, status=400)
         except RecentlyView.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'INVALID_OBJECT'}, status=400)
+            return JsonResponse({'message': 'INVALID_OBJECT'}, status=400)
         except KeyError as e:
-            return JsonResponse({'MESSAGE': f'KEY_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'KEY_ERROR:{e}'}, status=400)
         except json.JSONDecodeError as e:
-            return JsonResponse({'MESSAGE': f'JSON_DECODE_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'JSON_DECODE_ERROR:{e}'}, status=400)
 
 class CommunityView(View):
     @login_decorator(login_required=True)
@@ -336,15 +393,15 @@ class CommunityView(View):
                 product=product,
                 description=description,
             )
-            return JsonResponse({'MESSAGE': 'SUCCESS'}, status=200)
+            return JsonResponse({'message': 'SUCCESS'}, status=200)
         except User.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'INVALID_USER'}, status=400)
+            return JsonResponse({'message': 'INVALID_USER'}, status=400)
         except Product.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'INVALID_PRODUCT'}, status=400)
+            return JsonResponse({'message': 'INVALID_PRODUCT'}, status=400)
         except KeyError as e:
-            return JsonResponse({'MESSAGE': f'KEY_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'KEY_ERROR:{e}'}, status=400)
         except json.JSONDecodeError as e:
-            return JsonResponse({'MESSAGE': f'JSON_DECODE_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'JSON_DECODE_ERROR:{e}'}, status=400)
     
     @login_decorator(login_required=True)
     def patch(self, request, id):
@@ -356,16 +413,16 @@ class CommunityView(View):
             community_update = Community.objects.get(pk=id)
             
             if community_update.user.id is not user_id:
-                return JsonResponse({'MESSAGE': 'INVALID_USER'}, status=403)
+                return JsonResponse({'message': 'INVALID_USER'}, status=403)
             community_update.description = description
             community_update.save()
-            return JsonResponse({'MESSAGE': 'SUCCESS'}, status=200)
+            return JsonResponse({'message': 'SUCCESS'}, status=200)
         except Community.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'NO_EXIST_COMMUNITY'}, status=400)
+            return JsonResponse({'message': 'NO_EXIST_COMMUNITY'}, status=400)
         except KeyError as e:
-            return JsonResponse({'MESSAGE': f'KEY_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'KEY_ERROR:{e}'}, status=400)
         except json.JSONDecodeError as e:
-            return JsonResponse({'MESSAGE': f'JSON_DECODE_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'JSON_DECODE_ERROR:{e}'}, status=400)
     
     @login_decorator(login_required=True)
     def delete(self, request, id):
@@ -374,15 +431,15 @@ class CommunityView(View):
             community_delete = Community.objects.get(pk=id)
             
             if community_delete.user.id is not user_id:
-                return JsonResponse({'MESSAGE': 'INVALID_USER'}, status=403)
+                return JsonResponse({'message': 'INVALID_USER'}, status=403)
             community_delete.delete()
-            return JsonResponse({'MESSAGE': 'SUCCESS'}, status=200)
+            return JsonResponse({'message': 'SUCCESS'}, status=200)
         except Community.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'NO_EXIST_COMMUNITY'}, status=400)
+            return JsonResponse({'message': 'NO_EXIST_COMMUNITY'}, status=400)
         except KeyError as e:
-            return JsonResponse({'MESSAGE': f'KEY_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'KEY_ERROR:{e}'}, status=400)
         except json.JSONDecodeError as e:
-            return JsonResponse({'MESSAGE': f'JSON_DECODE_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'JSON_DECODE_ERROR:{e}'}, status=400)
     
     @login_decorator(login_required=True)
     def get(self, request, id):
@@ -420,11 +477,11 @@ class CommunityView(View):
             return JsonResponse({"community_detail": community_detail, "comment_count": comment_count,
                                  "comment_list"    : comment_list}, status=200)
         except Community.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'NO_EXIST_COMMUNITY'}, status=400)
+            return JsonResponse({'message': 'NO_EXIST_COMMUNITY'}, status=400)
         except KeyError as e:
-            return JsonResponse({'MESSAGE': f'KEY_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'KEY_ERROR:{e}'}, status=400)
         except json.JSONDecodeError as e:
-            return JsonResponse({'MESSAGE': f'JSON_DECODE_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'JSON_DECODE_ERROR:{e}'}, status=400)
 
 def get_is_like(user_id):
     return CommunityLike.objects.filter(community_id=id, user_id=user_id).exists()
@@ -442,17 +499,17 @@ class CommunityCommentView(View):
                 communtiy_id=data['community_id'],
                 content=content,
             )
-            return JsonResponse({'MESSAGE': 'SUCCESS'}, status=200)
+            return JsonResponse({'message': 'SUCCESS'}, status=200)
         except User.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'INVALID_USER'}, status=400)
+            return JsonResponse({'message': 'INVALID_USER'}, status=400)
         except Community.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'INVALID_COMMUNITY'}, status=400)
+            return JsonResponse({'message': 'INVALID_COMMUNITY'}, status=400)
         except CommunityComment.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'INVALID_COMMENT'}, status=400)
+            return JsonResponse({'message': 'INVALID_COMMENT'}, status=400)
         except KeyError as e:
-            return JsonResponse({'MESSAGE': f'KEY_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'KEY_ERROR:{e}'}, status=400)
         except json.JSONDecodeError as e:
-            return JsonResponse({'MESSAGE': f'JSON_DECODE_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'JSON_DECODE_ERROR:{e}'}, status=400)
     
     @login_decorator(login_required=True)
     def delete(self, request, id):
@@ -460,15 +517,15 @@ class CommunityCommentView(View):
         try:
             community_comment_delete = CommunityComment.objects.get(pk=id)
             if community_comment_delete.user.id is not user_id:
-                return JsonResponse({'MESSAGE': 'INVALID_USER'}, status=403)
+                return JsonResponse({'message': 'INVALID_USER'}, status=403)
             community_comment_delete.delete()
-            return JsonResponse({'MESSAGE': 'SUCCESS'}, status=200)
+            return JsonResponse({'message': 'SUCCESS'}, status=200)
         except CommunityComment.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'NO_EXIST_COMMUNITY'}, status=400)
+            return JsonResponse({'message': 'NO_EXIST_COMMUNITY'}, status=400)
         except KeyError as e:
-            return JsonResponse({'MESSAGE': f'KEY_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'KEY_ERROR:{e}'}, status=400)
         except json.JSONDecodeError as e:
-            return JsonResponse({'MESSAGE': f'JSON_DECODE_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'JSON_DECODE_ERROR:{e}'}, status=400)
 
 class LectureCommentView(View):
     @login_decorator(login_required=True)
@@ -486,15 +543,15 @@ class LectureCommentView(View):
                 content=content,
                 image_url=image_url
             )
-            return JsonResponse({'MESSAGE': 'SUCCESS'}, status=200)
+            return JsonResponse({'message': 'SUCCESS'}, status=200)
         except User.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'INVALID_USER'}, status=400)
+            return JsonResponse({'message': 'INVALID_USER'}, status=400)
         except Lecture.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'INVALID_LECTURE'}, status=400)
+            return JsonResponse({'message': 'INVALID_LECTURE'}, status=400)
         except KeyError as e:
-            return JsonResponse({'MESSAGE': f'KEY_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'KEY_ERROR:{e}'}, status=400)
         except json.JSONDecodeError as e:
-            return JsonResponse({'MESSAGE': f'JSON_DECODE_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'JSON_DECODE_ERROR:{e}'}, status=400)
     
     @login_decorator(login_required=True)
     def patch(self, request, id):
@@ -505,16 +562,16 @@ class LectureCommentView(View):
             lecture_comment_update = LectureComment.objects.get(pk=id)
             
             if lecture_comment_update.user.id != user_id:  # 수정하기 누르자마자 작성자 아니면 걸러지는
-                return JsonResponse({'MESSAGE': 'INVALID_USER'}, status=403)
+                return JsonResponse({'message': 'INVALID_USER'}, status=403)
             lecture_comment_update.content = content
             lecture_comment_update.save()
-            return JsonResponse({'MESSAGE': 'SUCCESS'}, status=200)
+            return JsonResponse({'message': 'SUCCESS'}, status=200)
         except LectureComment.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'NO_EXIST_COMMENT'}, status=400)
+            return JsonResponse({'message': 'NO_EXIST_COMMENT'}, status=400)
         except KeyError as e:
-            return JsonResponse({'MESSAGE': f'KEY_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'KEY_ERROR:{e}'}, status=400)
         except json.JSONDecodeError as e:
-            return JsonResponse({'MESSAGE': f'JSON_DECODE_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'JSON_DECODE_ERROR:{e}'}, status=400)
     
     @login_decorator(login_required=True)
     def delete(self, request, id):
@@ -522,15 +579,15 @@ class LectureCommentView(View):
         try:
             lecture_comment_delete = LectureComment.objects.get(pk=id)
             if lecture_comment_delete.user.id != user_id:
-                return JsonResponse({'MESSAGE': 'INVALID_USER'}, status=403)
+                return JsonResponse({'message': 'INVALID_USER'}, status=403)
             lecture_comment_delete.delete()
-            return JsonResponse({'MESSAGE': 'SUCCESS'}, status=200)
+            return JsonResponse({'message': 'SUCCESS'}, status=200)
         except LectureComment.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'NO_EXIST_COMMENT'}, status=400)
+            return JsonResponse({'message': 'NO_EXIST_COMMENT'}, status=400)
         except KeyError as e:
-            return JsonResponse({'MESSAGE': f'KEY_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'KEY_ERROR:{e}'}, status=400)
         except json.JSONDecodeError as e:
-            return JsonResponse({'MESSAGE': f'JSON_DECODE_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'JSON_DECODE_ERROR:{e}'}, status=400)
     
     @login_decorator(login_required=True)
     def get(self, request):
@@ -548,11 +605,11 @@ class LectureCommentView(View):
             
             return JsonResponse({"comment_count": comment_count, "comment_list": comments}, status=200)
         except LectureComment.DoesNotExist:
-            return JsonResponse({'MESSAGE': 'NO_EXIST_COMMENT'}, status=400)
+            return JsonResponse({'message': 'NO_EXIST_COMMENT'}, status=400)
         except KeyError as e:
-            return JsonResponse({'MESSAGE': f'KEY_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'KEY_ERROR:{e}'}, status=400)
         except json.JSONDecodeError as e:
-            return JsonResponse({'MESSAGE': f'JSON_DECODE_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'JSON_DECODE_ERROR:{e}'}, status=400)
 
 
 class CommunityLikeView(View):
@@ -566,17 +623,17 @@ class CommunityLikeView(View):
             if CommunityLike.objects.prefetch_related('community_like_user').filter(user=user_id,
                                                                                     community=community_id).exists():
                 CommunityLike.objects.get(user=user_id, community=community_id).delete()
-                return JsonResponse({'MESSAGE': 'REMOVED'}, status=200)
+                return JsonResponse({'message': 'REMOVED'}, status=200)
             
             CommunityLike(
                 user_id=user_id,
                 community_id=community_id
             ).save()
-            return JsonResponse({'MESSAGE': 'LIKED_COMMUNITY'}, status=201)
+            return JsonResponse({'message': 'LIKED_COMMUNITY'}, status=201)
         except KeyError as e:
-            return JsonResponse({'MESSAGE': f'KEY_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'KEY_ERROR:{e}'}, status=400)
         except json.JSONDecodeError as e:
-            return JsonResponse({'MESSAGE': f'JSON_DECODE_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'JSON_DECODE_ERROR:{e}'}, status=400)
 
 class ProductLikeView(View):
     @login_decorator(login_required=True)
@@ -589,14 +646,14 @@ class ProductLikeView(View):
             if ProductLike.objects.prefetch_related('product_like_user').filter(user=user_id,
                                                                                 product=product_id).exists():
                 ProductLike.objects.get(user=user_id, product=product_id).delete()
-                return JsonResponse({'MESSAGE': 'REMOVED'}, status=200)
+                return JsonResponse({'message': 'REMOVED'}, status=200)
             
             ProductLike(
                 user_id=user_id,
                 product_id=data['product_id']
             ).save()
-            return JsonResponse({'MESSAGE': 'LIKED_PRODUCT'}, status=201)
+            return JsonResponse({'message': 'LIKED_PRODUCT'}, status=201)
         except KeyError as e:
-            return JsonResponse({'MESSAGE': f'KEY_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'KEY_ERROR:{e}'}, status=400)
         except json.JSONDecodeError as e:
-            return JsonResponse({'MESSAGE': f'JSON_DECODE_ERROR:{e}'}, status=400)
+            return JsonResponse({'message': f'JSON_DECODE_ERROR:{e}'}, status=400)

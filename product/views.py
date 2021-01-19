@@ -7,7 +7,7 @@ from django.http import JsonResponse
 
 from product.models import Product, Chapter, Lecture, LectureVideo, LectureContent
 from user.models import User, ProductLike, RecentlyView, UserProduct
-from core.utils import login_decorator
+from core.common_utils import login_decorator
 from clnass_101.settings import S3_BUCKET_URL
 
 

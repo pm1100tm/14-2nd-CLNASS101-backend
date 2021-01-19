@@ -9,24 +9,34 @@
 """User APP"""
 class BlankField(Exception):
     def __init__(self):
-        super().__init__('필수 입력 값이 입력되지 않았습니다.')
+        super().__init__('INPUT_REQUIRED')
 
 
 class NotValidUserName(Exception):
     def __init__(self):
-        super().__init__('올바른 유저명이 아닙니다.')
+        super().__init__('INVALID_USER_NAME')
 
 
 class NotValidEmail(Exception):
     def __init__(self):
-        super().__init__('올바른 이메일 형식이 아닙니다.')
+        super().__init__('INVALID_EMAIL_FORMAT')
 
 
 class NotValidPassword(Exception):
     def __init__(self):
-        super().__init__('올바른 비밀번호 형식이 아닙니다.')
+        super().__init__('INVALID_PASSWORD_FORMAT')
 
 
-class DuplicateUser(Exception):
+class DuplicatedUser(Exception):
     def __init__(self):
-        super().__init__('이미 가입되어 있는 회원입니다.')
+        super().__init__('DUPLICATED_USER')
+
+
+class NotExistUser(Exception):
+    def __init__(self):
+        super().__init__('NOT_EXIST_USER')
+
+
+class WrongPassword(Exception):
+    def __init__(self):
+        super().__init__('WRONG_PASSWORD')
