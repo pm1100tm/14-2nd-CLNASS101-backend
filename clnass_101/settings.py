@@ -9,6 +9,7 @@ https://docs.djangoproject.com/en/3.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/3.1/ref/settings/
 """
+import os
 
 from pathlib import Path
 
@@ -22,9 +23,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/3.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = my_settings.SECRET['secret']
+SECRET_KEY = my_settings.SECRET_KEY
 
-DATABASES = my_settings.DATABASES
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
@@ -40,7 +40,12 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'corsheaders'
+    'corsheaders',
+    'user',
+    'product',
+    'order',
+    'kit',
+    'creator',
 ]
 
 MIDDLEWARE = [
@@ -76,6 +81,7 @@ WSGI_APPLICATION = 'clnass_101.wsgi.application'
 
 
 # Database
+DATABASES = my_settings.DATABASES
 # https://docs.djangoproject.com/en/3.1/ref/settings/#databases
 
 
@@ -143,5 +149,41 @@ CORS_ALLOW_HEADERS = (
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
-		#만약 허용해야할 추가적인 헤더키가 있다면?(사용자정의 키) 여기에 추가하면 됩니다.
+    #만약 허용해야할 추가적인 헤더키가 있다면?(사용자정의 키) 여기에 추가하면 됩니다.
 )
+
+AWS_ACCESS_KEY_ID       = my_settings.S3_ACCESS_KEY
+AWS_SECRET_ACCESS_KEY   = my_settings.S3_SECRET_KEY
+AWS_STORAGE_BUCKET_NAME = my_settings.S3_BUCKET_NAME
+S3_BUCKET_URL           = my_settings.S3_BUCKET_URL
+
+LOGGING = {
+    'disable_existing_loggers': False,
+    'version': 1,
+    'formatters': {
+         'verbose': {
+            'format': '{asctime} {levelname} {message}',
+            'style': '{'
+        },
+    },
+    'handlers': {
+        'console': {
+            'class'     : 'logging.StreamHandler',
+            'formatter' : 'verbose',
+            'level'     : 'DEBUG',
+        },
+        'file': {
+            'level'     : 'DEBUG',
+            'class'     : 'logging.FileHandler',
+            'formatter' : 'verbose',
+            'filename'  : 'debug.log',
+        },
+    },
+    'loggers': {
+        'django.db.backends': {
+            'handlers' : ['console','file'],
+            'level'    : 'DEBUG',
+            'propagate': False,
+        },
+    },
+}
